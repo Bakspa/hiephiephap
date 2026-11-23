@@ -1,0 +1,56 @@
+name: Publiceren op GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  controleren:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Controleer interne links en bestanden
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib, sys
+          root = pathlib.Path("site")
+          fout = 0
+          for html in root.rglob("*.html"):
+              tekst = html.read_text(encoding="utf-8")
+              for url in re.findall(r'(?:href|src)="([^"#?]+)', tekst) + \
+                         [u.split()[0] for s in re.findall(r'srcset="([^"]+)"', tekst) for u in s.split(",")]:
+                  if re.match(r"^(https?:|mailto:|data:|//)", url):
+                      continue
+                  doel = (html.parent / url).resolve()
+                  if doel.is_dir():
+                      doel = doel / "index.html"
+                  if not doel.exists():
+                      print(f"Kapotte link in {html}: {url}"); fout += 1
+          print("Kapotte links:", fout)
+          sys.exit(1 if fout else 0)
+          EOF
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publiceren:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: controleren
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
